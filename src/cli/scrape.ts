@@ -24,7 +24,11 @@ if (!config.BRIGHTDATA_API_TOKEN) {
 }
 
 const fetcher = new BrightDataClient(
-  { apiToken: config.BRIGHTDATA_API_TOKEN, zone: config.BRIGHTDATA_ZONE },
+  {
+    apiToken: config.BRIGHTDATA_API_TOKEN,
+    zone: config.BRIGHTDATA_ZONE,
+    ...(config.BRIGHTDATA_EXPECT ? { expect: config.BRIGHTDATA_EXPECT } : {}),
+  },
   new InMemoryLedger(config.SCRAPE_DAILY_BUDGET),
 );
 

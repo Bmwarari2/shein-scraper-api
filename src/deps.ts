@@ -31,7 +31,11 @@ export function buildDeps(config: Config, overrides: { fetcher?: Fetcher } = {})
       throw new Error("BRIGHTDATA_API_TOKEN is required (or inject a Fetcher override)");
     }
     fetcher = new BrightDataClient(
-      { apiToken: config.BRIGHTDATA_API_TOKEN, zone: config.BRIGHTDATA_ZONE },
+      {
+        apiToken: config.BRIGHTDATA_API_TOKEN,
+        zone: config.BRIGHTDATA_ZONE,
+        ...(config.BRIGHTDATA_EXPECT ? { expect: config.BRIGHTDATA_EXPECT } : {}),
+      },
       ledger,
     );
   }

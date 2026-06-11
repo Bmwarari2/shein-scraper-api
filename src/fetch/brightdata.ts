@@ -29,7 +29,7 @@ const MAX_ATTEMPTS = 2; // Cloud Tasks owns real retries; this only smooths tran
 
 export class BrightDataClient implements Fetcher {
   constructor(
-    private readonly cfg: { apiToken: string; zone: string; timeoutMs?: number },
+    private readonly cfg: { apiToken: string; zone: string; timeoutMs?: number; expect?: string },
     private readonly ledger: BudgetLedger,
   ) {}
 
@@ -41,6 +41,12 @@ export class BrightDataClient implements Fetcher {
       url,
       format: "raw",
       country: "gb",
+      // Custom 'expect' (zone must have "Manual 'expect' elements" enabled):
+      // return as soon as the gbRawData blob is in the HTML, instead of waiting
+      // for SHEIN's rendered price selectors / window.load (which never fire on
+      // shein.co.uk and time out to an empty 502). x-unblock-expect goes in the
+      // nested `headers` object per the Unlocker API.
+      ...(this.cfg.expect ? { headers: { "x-unblock-expect": this.cfg.expect } } : {}),
     };
 
     let lastError: Error | null = null;

@@ -6,6 +6,10 @@ const envSchema = z.object({
 
   BRIGHTDATA_API_TOKEN: z.string().optional(),
   BRIGHTDATA_ZONE: z.string().default("shein_scrapper"),
+  // Unlocker API "Manual 'expect' elements" value (x-unblock-expect). Default
+  // returns as soon as the gbRawData blob is present. Empty = let Bright Data
+  // use its automatic per-domain expectations.
+  BRIGHTDATA_EXPECT: z.string().default('{"text":"gbRawData"}'),
   SCRAPE_DAILY_BUDGET: z.coerce.number().int().positive().default(500),
 
   API_KEYS: z.string().default(""),
