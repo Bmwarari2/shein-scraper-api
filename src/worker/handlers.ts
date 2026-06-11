@@ -26,11 +26,16 @@ function ttlFor(options: JobOptions, defaultTtl: number): number {
   return m ? parseInt(m[1]!, 10) : defaultTtl;
 }
 
-/** Fetch with the render-retry policy: plain first, one render retry on missing blob. */
+/**
+ * Fetch a product page: one plain attempt, then a single re-fetch if the blob
+ * is missing. Web Unlocker renders JS automatically (no render flag), so the
+ * retry is just a fresh unlocker attempt that may route past a transient block;
+ * `render: true` here is only the telemetry marker for the missing-blob retry.
+ */
 async function fetchProductHtml(fetcher: Fetcher, url: string, jobId: string): Promise<string> {
   const plain = await fetcher.fetchHtml(url, { jobId });
   if (classifyProductHtml(plain).kind === "ok") return plain;
-  logger.info({ event: "render_retry", url, jobId });
+  logger.info({ event: "blob_missing_retry", url, jobId });
   return fetcher.fetchHtml(url, { render: true, jobId });
 }
 

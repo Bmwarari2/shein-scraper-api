@@ -1,0 +1,102 @@
+name: Deploy to Cloud Run
+
+# Manual trigger while iterating (Actions tab → Run workflow), plus automatic
+# deploys when main moves. Build once, deploy the same image as two services:
+# the public API and the internal Cloud Tasks worker.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+# Required config — set as repository *Variables* (Settings → Secrets and
+# variables → Actions → Variables), none are secret:
+#   GCP_PROJECT            e.g. my-shein-proj
+#   GCP_REGION             e.g. europe-west2   (London; keeps data UK-side)
+#   GCP_WIF_PROVIDER       projects/<num>/locations/global/workloadIdentityPools/<pool>/providers/<prov>
+#   GCP_DEPLOY_SA          deployer SA email (run.admin + artifactregistry.writer + iam.serviceAccountUser)
+#   API_SERVICE_ACCOUNT    shein-api@<project>.iam.gserviceaccount.com   (API runtime + Cloud Tasks OIDC identity)
+#   WORKER_SERVICE_ACCOUNT shein-worker@<project>.iam.gserviceaccount.com
+# Secret *values* live in Secret Manager (brightdata-api-token, api-keys,
+# task-secret), created by infra/setup.sh — they are never put in GitHub.
+
+env:
+  REPO: shein-scraper
+  IMAGE_NAME: app
+  QUEUE: shein-scrape
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token for Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build & push image
+        id: image
+        run: |
+          IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/${REPO}/${IMAGE_NAME}:${GITHUB_SHA}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      # Shared env for both services. Secrets are mounted from Secret Manager,
+      # never passed as plaintext.
+      - name: Deploy worker (internal, OIDC-gated)
+        id: worker
+        run: |
+          IMAGE="${{ steps.image.outputs.image }}"
+          # First deploy: WORKER_URL is not known until the service exists, so
+          # boot with a placeholder, then patch it in once we read the real URL.
+          gcloud run deploy shein-worker \
+            --image="$IMAGE" \
+            --region="${{ vars.GCP_REGION }}" \
+            --service-account="${{ vars.WORKER_SERVICE_ACCOUNT }}" \
+            --no-allow-unauthenticated \
+            --command=node --args=dist/worker/main.js \
+            --set-env-vars=NODE_ENV=production,STORE_MODE=firestore,QUEUE_MODE=cloud_tasks,GCP_PROJECT=${{ vars.GCP_PROJECT }},TASKS_LOCATION=${{ vars.GCP_REGION }},TASKS_QUEUE=${QUEUE},TASKS_INVOKER_SA=${{ vars.API_SERVICE_ACCOUNT }},WORKER_URL=https://pending.invalid \
+            --set-secrets=BRIGHTDATA_API_TOKEN=brightdata-api-token:latest,TASK_SECRET=task-secret:latest \
+            --quiet
+          WORKER_URL="$(gcloud run services describe shein-worker --region=${{ vars.GCP_REGION }} --format='value(status.url)')"
+          echo "url=$WORKER_URL" >> "$GITHUB_OUTPUT"
+          # Patch the real URL so the worker's in-app OIDC audience check matches.
+          gcloud run services update shein-worker --region=${{ vars.GCP_REGION }} \
+            --update-env-vars=WORKER_URL=$WORKER_URL --quiet
+
+      - name: Allow the API SA to invoke the worker
+        run: |
+          gcloud run services add-iam-policy-binding shein-worker \
+            --region=${{ vars.GCP_REGION }} \
+            --member="serviceAccount:${{ vars.API_SERVICE_ACCOUNT }}" \
+            --role=roles/run.invoker --quiet
+
+      - name: Deploy API (public; app enforces X-API-Key)
+        id: api
+        run: |
+          IMAGE="${{ steps.image.outputs.image }}"
+          WORKER_URL="${{ steps.worker.outputs.url }}"
+          gcloud run deploy shein-api \
+            --image="$IMAGE" \
+            --region="${{ vars.GCP_REGION }}" \
+            --service-account="${{ vars.API_SERVICE_ACCOUNT }}" \
+            --allow-unauthenticated \
+            --command=node --args=dist/api/main.js \
+            --set-env-vars=NODE_ENV=production,STORE_MODE=firestore,QUEUE_MODE=cloud_tasks,GCP_PROJECT=${{ vars.GCP_PROJECT }},TASKS_LOCATION=${{ vars.GCP_REGION }},TASKS_QUEUE=${QUEUE},WORKER_URL=$WORKER_URL,TASKS_INVOKER_SA=${{ vars.API_SERVICE_ACCOUNT }} \
+            --set-secrets=BRIGHTDATA_API_TOKEN=brightdata-api-token:latest,API_KEYS=api-keys:latest,TASK_SECRET=task-secret:latest \
+            --quiet
+          API_URL="$(gcloud run services describe shein-api --region=${{ vars.GCP_REGION }} --format='value(status.url)')"
+          echo "### Deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "- API: $API_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker: ${{ steps.worker.outputs.url }} (internal)" >> "$GITHUB_STEP_SUMMARY"

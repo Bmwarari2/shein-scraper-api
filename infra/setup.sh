@@ -48,6 +48,37 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$W
 gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$WORKER_SA" \
   --role=roles/cloudtasks.enqueuer --condition=None -q
 
+# Cloud Tasks signs each worker push as an OIDC token for $API_SA, so $API_SA
+# must be able to act as itself (the run.invoker binding on the worker service
+# is granted by the deploy workflow, once the service exists).
+gcloud iam service-accounts add-iam-policy-binding "$API_SA" \
+  --member="serviceAccount:$API_SA" --role=roles/iam.serviceAccountUser -q
+
+# ── GitHub Actions deploy via Workload Identity Federation (keyless) ───────────
+# Set GH_REPO=owner/name to wire the OIDC trust to your repository.
+GH_REPO="${GH_REPO:-}"
+DEPLOY_SA="github-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+gcloud iam service-accounts create github-deployer 2>/dev/null || true
+for ROLE in roles/run.admin roles/artifactregistry.writer roles/iam.serviceAccountUser; do
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:$DEPLOY_SA" --role="$ROLE" --condition=None -q
+done
+gcloud iam workload-identity-pools create github --location=global \
+  --display-name="GitHub Actions" 2>/dev/null || true
+POOL_ID="$(gcloud iam workload-identity-pools describe github --location=global --format='value(name)')"
+gcloud iam workload-identity-pools providers create-oidc github \
+  --location=global --workload-identity-pool=github \
+  --display-name="GitHub OIDC" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository=='${GH_REPO}'" \
+  --issuer-uri="https://token.actions.githubusercontent.com" 2>/dev/null || true
+if [[ -n "$GH_REPO" ]]; then
+  gcloud iam service-accounts add-iam-policy-binding "$DEPLOY_SA" \
+    --role=roles/iam.workloadIdentityUser \
+    --member="principalSet://iam.googleapis.com/${POOL_ID}/attribute.repository/${GH_REPO}" -q
+fi
+PROVIDER="${POOL_ID}/providers/github"
+
 # ── Secrets (create empty; fill via `gcloud secrets versions add`) ────────────
 for S in brightdata-api-token api-keys task-secret; do
   gcloud secrets create "$S" --replication-policy=automatic 2>/dev/null || true
@@ -63,17 +94,22 @@ gcloud logging metrics create schema_drift \
 
 cat <<EOF
 
-Bootstrap done. Next steps (manual):
- 1. Add secret values:
+Bootstrap done. Next steps:
+ 1. Add secret values (one-off, kept out of git/GitHub):
       printf '%s' "\$TOKEN" | gcloud secrets versions add brightdata-api-token --data-file=-
- 2. Build & push the image, then deploy two Cloud Run services from it:
-      shein-api:    command 'node dist/api/main.js',    public ingress, SA $API_SA
-      shein-worker: command 'node dist/worker/main.js', internal ingress, SA $WORKER_SA
-    Env: STORE_MODE=firestore QUEUE_MODE=cloud_tasks GCP_PROJECT=$PROJECT_ID
-         TASKS_LOCATION=$REGION TASKS_QUEUE=$QUEUE WORKER_URL=<worker url>
-    Secrets: BRIGHTDATA_API_TOKEN, API_KEYS, TASK_SECRET.
- 3. Switch worker auth to Cloud Tasks OIDC (oidcToken on tasks + audience check).
+      printf '%s' "\$KEYS"  | gcloud secrets versions add api-keys           --data-file=-   # comma-separated
+      head -c 32 /dev/urandom | base64 | gcloud secrets versions add task-secret --data-file=-
+ 2. Set these GitHub repository *Variables* (Settings → Secrets and variables → Actions):
+      GCP_PROJECT=$PROJECT_ID
+      GCP_REGION=$REGION
+      GCP_WIF_PROVIDER=$PROVIDER
+      GCP_DEPLOY_SA=$DEPLOY_SA
+      API_SERVICE_ACCOUNT=$API_SA
+      WORKER_SERVICE_ACCOUNT=$WORKER_SA
+ 3. Run the "Deploy to Cloud Run" workflow (Actions tab → Run workflow). It
+    builds the image and deploys worker + API; OIDC worker auth is in-app.
  4. Create alert policies on the scrape_blocked / schema_drift metrics and a
     billing budget with 50/80/100% thresholds.
- 5. In the Bright Data dashboard: zone 'shein_uk', country=gb, daily spend cap.
+ 5. In the Bright Data dashboard: zone 'shein_scrapper', country=gb, daily
+    spend cap, and allowlist shein.co.uk on the zone.
 EOF
