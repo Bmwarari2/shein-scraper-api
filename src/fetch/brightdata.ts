@@ -8,13 +8,16 @@ import type { BudgetLedger } from "./budget.js";
  *
  * Cost policy (the §5.4 guardrails):
  *  - budget ledger checked before every call;
- *  - no JS rendering by default — callers opt in per request, and the worker
- *    only does so as a one-time retry when the data blob is missing;
  *  - never used for images/assets (those download directly from Shein's CDN).
  *
- * PHASE 0: verify the exact request options (render flag name, geo override,
- * premium-domain pricing for shein.co.uk) against current Bright Data docs.
- * The zone itself must be configured with country=gb and a spend cap.
+ * JS rendering: Web Unlocker renders automatically when a page needs it — there
+ * is NO `render` request field (verified against Bright Data docs, Phase 0).
+ * `opts.render` therefore no longer changes the request; it survives only as a
+ * "this is the missing-blob retry" marker for ledger/telemetry. The retry is a
+ * plain re-fetch (a fresh unlocker attempt may route past a transient block).
+ *
+ * PHASE 0 remaining: confirm premium-domain pricing for shein.co.uk and that a
+ * plain fetch reliably carries gbRawData. The zone is configured geo=gb + cap.
  */
 
 export interface Fetcher {
@@ -38,7 +41,6 @@ export class BrightDataClient implements Fetcher {
       url,
       format: "raw",
       country: "gb",
-      ...(opts.render ? { render: true } : {}),
     };
 
     let lastError: Error | null = null;
