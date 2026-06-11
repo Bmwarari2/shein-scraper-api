@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  # Deploy job (enable once the GCP project exists — see infra/setup.sh):
+  # authenticate with google-github-actions/auth (workload identity federation),
+  # build with docker/build-push-action to Artifact Registry, then
+  # `gcloud run deploy shein-api ...` and `gcloud run deploy shein-worker ...`
+  # with --command overrides selecting dist/api/main.js vs dist/worker/main.js.
