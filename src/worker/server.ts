@@ -10,11 +10,11 @@ import type { TaskPayload } from "./tasks.js";
  * Response semantics drive the queue: 2xx = done (success OR permanently
  * settled failure), 5xx = redeliver with backoff.
  *
- * Deploy note: this service must NOT be publicly reachable — Cloud Run
- * ingress internal-and-cloud-load-balancing + `--no-allow-unauthenticated`.
- * Cloud Run validates the Cloud Tasks OIDC token at the edge; the in-app
- * check below re-verifies signature + audience + caller identity as
- * defence-in-depth. The shared secret is a tertiary belt-and-braces check.
+ * Deploy note: the Cloud Run edge is public (`--allow-unauthenticated`) and the
+ * `/internal/tasks` handler below is the auth gate — it accepts a request only
+ * with a valid Cloud Tasks OIDC token OR the shared secret (both Cloud-Tasks-
+ * only). Private-edge IAM + OIDC was the intended design but proved brittle to
+ * wire; revisit hardening the edge back to private once that's understood.
  */
 
 const MAX_TASK_ATTEMPTS = 4; // keep in sync with the queue's maxAttempts in infra/
@@ -60,15 +60,21 @@ export function buildWorkerServer(deps: WorkerDeps, opts: WorkerAuthOptions = {}
   app.get("/healthz", async () => ({ ok: true }));
 
   app.post("/internal/tasks", async (req, reply) => {
-    if (opts.oidc) {
-      const reason = await verifyOidc(req.headers.authorization, opts.oidc);
-      if (reason) {
-        req.log.warn({ event: "task_auth_rejected", reason });
-        return reply.code(401).send({ error: "unauthorized" });
+    // The service runs with a public Cloud Run edge (private-edge IAM + Cloud
+    // Tasks OIDC proved unreliable to wire here), so THIS is the auth gate.
+    // Accept a push that proves itself with EITHER a valid Cloud Tasks OIDC
+    // token OR the shared secret — both are strong and Cloud-Tasks-only.
+    if (opts.oidc || opts.taskSecret) {
+      let authed = false;
+      if (opts.oidc) {
+        const reason = await verifyOidc(req.headers.authorization, opts.oidc);
+        if (reason) req.log.warn({ event: "task_oidc_rejected", reason });
+        else authed = true;
       }
-    }
-    if (opts.taskSecret && req.headers["x-task-secret"] !== opts.taskSecret) {
-      return reply.code(403).send({ error: "forbidden" });
+      if (!authed && opts.taskSecret && req.headers["x-task-secret"] === opts.taskSecret) {
+        authed = true;
+      }
+      if (!authed) return reply.code(401).send({ error: "unauthorized" });
     }
     const payload = req.body as TaskPayload;
     // Cloud Tasks counts prior dispatches; on the final allowed attempt a

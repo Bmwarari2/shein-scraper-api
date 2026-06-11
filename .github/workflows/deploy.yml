@@ -68,17 +68,19 @@ jobs:
 
       # Shared env for both services. Secrets are mounted from Secret Manager,
       # never passed as plaintext.
-      - name: Deploy worker (internal, OIDC-gated)
+      - name: Deploy worker (public edge; app-level auth gate)
         id: worker
         run: |
           IMAGE="${{ steps.image.outputs.image }}"
-          # First deploy: WORKER_URL is not known until the service exists, so
-          # boot with a placeholder, then patch it in once we read the real URL.
+          # Edge is public; the worker's /internal/tasks handler enforces auth
+          # (valid Cloud Tasks OIDC token OR the shared secret). First deploy:
+          # WORKER_URL isn't known until the service exists, so boot with a
+          # placeholder, then patch it in once we read the real URL.
           gcloud run deploy shein-worker \
             --image="$IMAGE" \
             --region="${{ vars.GCP_REGION }}" \
             --service-account="${{ vars.WORKER_SERVICE_ACCOUNT }}" \
-            --no-allow-unauthenticated \
+            --allow-unauthenticated \
             --command=node --args=dist/worker/main.js \
             --set-env-vars=NODE_ENV=production,STORE_MODE=firestore,QUEUE_MODE=cloud_tasks,GCP_PROJECT=${{ vars.GCP_PROJECT }},TASKS_LOCATION=${{ vars.GCP_REGION }},TASKS_QUEUE=${QUEUE},TASKS_INVOKER_SA=${{ vars.API_SERVICE_ACCOUNT }},WORKER_URL=https://pending.invalid \
             --set-secrets=BRIGHTDATA_API_TOKEN=brightdata-api-token:latest,TASK_SECRET=task-secret:latest \

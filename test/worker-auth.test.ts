@@ -45,7 +45,7 @@ describe("worker task auth", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("still enforces the shared-secret check when no oidc is configured", async () => {
+  it("rejects a wrong shared secret when no oidc is configured", async () => {
     const app = buildWorker({ taskSecret: "s3cret" });
     const res = await app.inject({
       method: "POST",
@@ -53,6 +53,17 @@ describe("worker task auth", () => {
       headers: { "content-type": "application/json", "x-task-secret": "wrong" },
       payload,
     });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("accepts a correct shared secret when no oidc is configured", async () => {
+    const app = buildWorker({ taskSecret: "s3cret" });
+    const res = await app.inject({
+      method: "POST",
+      url: "/internal/tasks",
+      headers: { "content-type": "application/json", "x-task-secret": "s3cret" },
+      payload,
+    });
+    expect(res.statusCode).not.toBe(401);
   });
 });
