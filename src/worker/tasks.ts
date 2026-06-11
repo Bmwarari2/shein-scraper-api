@@ -53,6 +53,8 @@ export class CloudTasksEnqueuer implements Enqueuer {
       location: string;
       queue: string;
       workerUrl: string;
+      // SA Cloud Tasks signs the OIDC token as; must hold run.invoker on worker.
+      invokerServiceAccount: string;
       taskSecret?: string;
     },
   ) {}
@@ -67,9 +69,16 @@ export class CloudTasksEnqueuer implements Enqueuer {
           url: `${this.cfg.workerUrl}/internal/tasks`,
           headers: {
             "Content-Type": "application/json",
-            // v0 shared-secret auth; replace with OIDC token + audience check
-            // (Cloud Tasks oidcToken field) before exposing the worker at all.
+            // Defence-in-depth only; the OIDC token below is the real gate.
             ...(this.cfg.taskSecret ? { "X-Task-Secret": this.cfg.taskSecret } : {}),
+          },
+          // Cloud Tasks mints a Google-signed OIDC token per push. Cloud Run
+          // validates it at the edge (caller needs run.invoker) and the worker
+          // re-verifies signature + audience in-app (see server.ts). Audience is
+          // the worker's base URL, per Cloud Run convention.
+          oidcToken: {
+            serviceAccountEmail: this.cfg.invokerServiceAccount,
+            audience: this.cfg.workerUrl,
           },
           body: Buffer.from(JSON.stringify(payload)).toString("base64"),
         },

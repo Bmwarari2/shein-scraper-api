@@ -17,6 +17,10 @@ const envSchema = z.object({
   TASKS_LOCATION: z.string().default("europe-west2"),
   TASKS_QUEUE: z.string().default("shein-scrape"),
   WORKER_URL: z.string().optional(),
+  // Service account Cloud Tasks mints OIDC tokens as (and that holds
+  // run.invoker on the worker). Primary auth control in cloud_tasks mode.
+  TASKS_INVOKER_SA: z.string().optional(),
+  // Defence-in-depth shared secret; OIDC is the real gate.
   TASK_SECRET: z.string().optional(),
 
   PRODUCT_TTL_SECONDS: z.coerce.number().int().positive().default(6 * 3600),
@@ -31,8 +35,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = envSchema.parse(env);
   const apiKeys = parsed.API_KEYS.split(",").map((k) => k.trim()).filter(Boolean);
 
-  if (parsed.QUEUE_MODE === "cloud_tasks" && (!parsed.GCP_PROJECT || !parsed.WORKER_URL)) {
-    throw new Error("QUEUE_MODE=cloud_tasks requires GCP_PROJECT and WORKER_URL");
+  if (
+    parsed.QUEUE_MODE === "cloud_tasks" &&
+    (!parsed.GCP_PROJECT || !parsed.WORKER_URL || !parsed.TASKS_INVOKER_SA)
+  ) {
+    throw new Error(
+      "QUEUE_MODE=cloud_tasks requires GCP_PROJECT, WORKER_URL and TASKS_INVOKER_SA",
+    );
   }
   if (parsed.STORE_MODE === "firestore" && !parsed.GCP_PROJECT) {
     throw new Error("STORE_MODE=firestore requires GCP_PROJECT");

@@ -55,6 +55,7 @@ export function buildDeps(config: Config, overrides: { fetcher?: Fetcher } = {})
       location: config.TASKS_LOCATION,
       queue: config.TASKS_QUEUE,
       workerUrl: config.WORKER_URL!,
+      invokerServiceAccount: config.TASKS_INVOKER_SA!,
       ...(config.TASK_SECRET ? { taskSecret: config.TASK_SECRET } : {}),
     });
   } else {
