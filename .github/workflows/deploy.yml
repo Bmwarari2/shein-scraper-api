@@ -7,6 +7,13 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    # Docs, the bootstrap script, and the CI workflow don't change the running
+    # services — skip the deploy for those (still deployable via workflow_dispatch).
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'infra/**'
+      - '.github/workflows/ci.yml'
 
 # Required config — set as repository *Variables* (Settings → Secrets and
 # variables → Actions → Variables), none are secret:

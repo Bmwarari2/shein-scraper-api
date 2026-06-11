@@ -13,10 +13,17 @@ Full design: [docs/PLAN.md](docs/PLAN.md).
 - ✅ Phase 2 — Bright Data fetch client, budget ledger, GBP fail-closed enforcement
 - ✅ Phase 3 — jobs, queue (inline + Cloud Tasks), memory + Firestore stores, caching
 - ✅ Phase 4 — REST API: async jobs, polling, paginated results, idempotency, API-key auth
-- ⬜ Phase 0 backfill — capture **real** page/review fixtures and verify Bright Data
-  request options + the reviews endpoint (`src/parse/reviews.ts` is a stub until then)
-- ⬜ Phase 5 — deploy (`infra/setup.sh` bootstraps the GCP project)
+- ✅ Phase 5 — **deployed to GCP Cloud Run** via GitHub Actions + Workload Identity
+  Federation (`infra/setup.sh` bootstraps; [docs/DEPLOY.md](docs/DEPLOY.md) is the runbook)
+- 🔶 Phase 0 backfill — capture **real** page/review fixtures and verify Bright Data
+  request options + the reviews endpoint (`src/parse/reviews.ts` is a stub until then).
+  **This is the current focus** — the parsers are still pinned by synthetic fixtures.
 - ⬜ Phase 6 — dashboards/alerts wiring, webhooks delivery task, image mirroring
+
+> New here (human or AI agent)? Start with **[AGENTS.md](AGENTS.md)**, then
+> [HANDOFF.md](HANDOFF.md) for current state and [docs/DEPLOY.md](docs/DEPLOY.md) for ops.
+
+Tests: `npm test` → **28 passing** (parsers + end-to-end flow + worker auth), no network.
 
 ## Quickstart (local)
 
