@@ -14,6 +14,7 @@ gcloud config set project "$PROJECT_ID"
 gcloud services enable \
   run.googleapis.com cloudtasks.googleapis.com firestore.googleapis.com \
   artifactregistry.googleapis.com secretmanager.googleapis.com \
+  iamcredentials.googleapis.com \
   monitoring.googleapis.com logging.googleapis.com
 
 # ── Firestore (Native mode) ───────────────────────────────────────────────────
