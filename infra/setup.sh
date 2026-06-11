@@ -62,6 +62,13 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$W
 gcloud iam service-accounts add-iam-policy-binding "$API_SA" \
   --member="serviceAccount:$API_SA" --role=roles/iam.serviceAccountUser -q
 
+# ...and the Cloud Tasks service agent must be able to MINT that OIDC token as
+# $API_SA at dispatch time, or every push is rejected by Cloud Run with 403.
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+gcloud iam service-accounts add-iam-policy-binding "$API_SA" \
+  --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-cloudtasks.iam.gserviceaccount.com" \
+  --role=roles/iam.serviceAccountTokenCreator -q
+
 # ── GitHub Actions deploy via Workload Identity Federation (keyless) ───────────
 # Set GH_REPO=owner/name to wire the OIDC trust to your repository.
 GH_REPO="${GH_REPO:-}"
