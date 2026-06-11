@@ -14,6 +14,7 @@ gcloud config set project "$PROJECT_ID"
 gcloud services enable \
   run.googleapis.com cloudtasks.googleapis.com firestore.googleapis.com \
   artifactregistry.googleapis.com secretmanager.googleapis.com \
+  iamcredentials.googleapis.com \
   monitoring.googleapis.com logging.googleapis.com
 
 # ── Firestore (Native mode) ───────────────────────────────────────────────────
@@ -48,11 +49,25 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$W
 gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$WORKER_SA" \
   --role=roles/cloudtasks.enqueuer --condition=None -q
 
+# Both runtime SAs read their config from Secret Manager (mounted by Cloud Run),
+# so they need accessor on the secrets — otherwise `gcloud run deploy` fails.
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$API_SA" \
+  --role=roles/secretmanager.secretAccessor --condition=None -q
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$WORKER_SA" \
+  --role=roles/secretmanager.secretAccessor --condition=None -q
+
 # Cloud Tasks signs each worker push as an OIDC token for $API_SA, so $API_SA
 # must be able to act as itself (the run.invoker binding on the worker service
 # is granted by the deploy workflow, once the service exists).
 gcloud iam service-accounts add-iam-policy-binding "$API_SA" \
   --member="serviceAccount:$API_SA" --role=roles/iam.serviceAccountUser -q
+
+# ...and the Cloud Tasks service agent must be able to MINT that OIDC token as
+# $API_SA at dispatch time, or every push is rejected by Cloud Run with 403.
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+gcloud iam service-accounts add-iam-policy-binding "$API_SA" \
+  --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-cloudtasks.iam.gserviceaccount.com" \
+  --role=roles/iam.serviceAccountTokenCreator -q
 
 # ── GitHub Actions deploy via Workload Identity Federation (keyless) ───────────
 # Set GH_REPO=owner/name to wire the OIDC trust to your repository.
@@ -64,14 +79,20 @@ for ROLE in roles/run.admin roles/artifactregistry.writer roles/iam.serviceAccou
     --member="serviceAccount:$DEPLOY_SA" --role="$ROLE" --condition=None -q
 done
 gcloud iam workload-identity-pools create github --location=global \
-  --display-name="GitHub Actions" 2>/dev/null || true
+  --display-name="GitHub Actions" 2>/dev/null || echo "WIF pool 'github' already exists"
 POOL_ID="$(gcloud iam workload-identity-pools describe github --location=global --format='value(name)')"
-gcloud iam workload-identity-pools providers create-oidc github \
-  --location=global --workload-identity-pool=github \
-  --display-name="GitHub OIDC" \
-  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-  --attribute-condition="assertion.repository=='${GH_REPO}'" \
-  --issuer-uri="https://token.actions.githubusercontent.com" 2>/dev/null || true
+# Create the OIDC provider only if missing — and DON'T swallow the error if the
+# create fails, since a silently-missing provider breaks the whole GitHub→GCP
+# token exchange (the deploy then fails with "invalid_target … doesn't exist").
+if ! gcloud iam workload-identity-pools providers describe github \
+      --location=global --workload-identity-pool=github >/dev/null 2>&1; then
+  gcloud iam workload-identity-pools providers create-oidc github \
+    --location=global --workload-identity-pool=github \
+    --display-name="GitHub OIDC" \
+    --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+    --attribute-condition="assertion.repository=='${GH_REPO}'" \
+    --issuer-uri="https://token.actions.githubusercontent.com"
+fi
 if [[ -n "$GH_REPO" ]]; then
   gcloud iam service-accounts add-iam-policy-binding "$DEPLOY_SA" \
     --role=roles/iam.workloadIdentityUser \
