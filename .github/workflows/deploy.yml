@@ -38,11 +38,18 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SA }}
+          token_format: access_token
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+      - name: Log in to Artifact Registry
+        # Authenticate Docker with the impersonated SA's access token directly.
+        # The gcloud credential helper doesn't reliably pick up WIF creds for
+        # `docker push`, which surfaces as "Unauthenticated request" on upload.
+        run: |
+          echo '${{ steps.auth.outputs.access_token }}' \
+            | docker login -u oauth2accesstoken --password-stdin \
+              https://${{ vars.GCP_REGION }}-docker.pkg.dev
 
       - name: Build & push image
         id: image
