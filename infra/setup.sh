@@ -49,6 +49,13 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$W
 gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$WORKER_SA" \
   --role=roles/cloudtasks.enqueuer --condition=None -q
 
+# Both runtime SAs read their config from Secret Manager (mounted by Cloud Run),
+# so they need accessor on the secrets — otherwise `gcloud run deploy` fails.
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$API_SA" \
+  --role=roles/secretmanager.secretAccessor --condition=None -q
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$WORKER_SA" \
+  --role=roles/secretmanager.secretAccessor --condition=None -q
+
 # Cloud Tasks signs each worker push as an OIDC token for $API_SA, so $API_SA
 # must be able to act as itself (the run.invoker binding on the worker service
 # is granted by the deploy workflow, once the service exists).
