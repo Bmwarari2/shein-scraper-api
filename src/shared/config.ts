@@ -5,7 +5,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().default(8080),
 
   BRIGHTDATA_API_TOKEN: z.string().optional(),
-  BRIGHTDATA_ZONE: z.string().default("shein_uk"),
+  BRIGHTDATA_ZONE: z.string().default("shein_scrapper"),
   SCRAPE_DAILY_BUDGET: z.coerce.number().int().positive().default(500),
 
   API_KEYS: z.string().default(""),
