@@ -64,14 +64,20 @@ for ROLE in roles/run.admin roles/artifactregistry.writer roles/iam.serviceAccou
     --member="serviceAccount:$DEPLOY_SA" --role="$ROLE" --condition=None -q
 done
 gcloud iam workload-identity-pools create github --location=global \
-  --display-name="GitHub Actions" 2>/dev/null || true
+  --display-name="GitHub Actions" 2>/dev/null || echo "WIF pool 'github' already exists"
 POOL_ID="$(gcloud iam workload-identity-pools describe github --location=global --format='value(name)')"
-gcloud iam workload-identity-pools providers create-oidc github \
-  --location=global --workload-identity-pool=github \
-  --display-name="GitHub OIDC" \
-  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-  --attribute-condition="assertion.repository=='${GH_REPO}'" \
-  --issuer-uri="https://token.actions.githubusercontent.com" 2>/dev/null || true
+# Create the OIDC provider only if missing — and DON'T swallow the error if the
+# create fails, since a silently-missing provider breaks the whole GitHub→GCP
+# token exchange (the deploy then fails with "invalid_target … doesn't exist").
+if ! gcloud iam workload-identity-pools providers describe github \
+      --location=global --workload-identity-pool=github >/dev/null 2>&1; then
+  gcloud iam workload-identity-pools providers create-oidc github \
+    --location=global --workload-identity-pool=github \
+    --display-name="GitHub OIDC" \
+    --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+    --attribute-condition="assertion.repository=='${GH_REPO}'" \
+    --issuer-uri="https://token.actions.githubusercontent.com"
+fi
 if [[ -n "$GH_REPO" ]]; then
   gcloud iam service-accounts add-iam-policy-binding "$DEPLOY_SA" \
     --role=roles/iam.workloadIdentityUser \
